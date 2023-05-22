@@ -15,7 +15,7 @@ class CutterIt :
     Return :
        complete .mp4 or .mp3 file
     '''
-    def __init__(self, filepath: str, cut_duration_sec = 0.7, smooth_add_sec = 0.15) :
+    def __init__(self, filepath: str, cut_duration_sec = 0.5, smooth_add_sec = 0.15) :
         os.makedirs('temp', exist_ok=True)
         self.filepath = filepath
         self.filename = self.filepath[:-4]
