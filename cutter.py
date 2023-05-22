@@ -8,11 +8,11 @@ class CutterIt :
     - Input: .mp4 or mp3 file
     - task: cutter silent part or keep only silent part 
 
-    Parameter
+    ### Parameter :
         - cut_duration_sec: second for removing or keeping, if silent longer than
         - smooth_add_sec: smoother add for not cutting immeadely when silent
 
-    Return :
+    ### Return :
        complete .mp4 or .mp3 file
     '''
     def __init__(self, filepath: str, cut_duration_sec = 0.5, smooth_add_sec = 0.15) :
