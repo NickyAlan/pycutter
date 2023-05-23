@@ -8,14 +8,14 @@ class CutterIt :
     - Input: .mp4 or mp3 file
     - task: cutter silent part or keep only silent part 
 
-    ### Parameter :
+    Parameter
         - cut_duration_sec: second for removing or keeping, if silent longer than
         - smooth_add_sec: smoother add for not cutting immeadely when silent
 
-    ### Return :
+    Return :
        complete .mp4 or .mp3 file
     '''
-    def __init__(self, filepath: str, cut_duration_sec = 0.5, smooth_add_sec = 0.15) :
+    def __init__(self, filepath: str, cut_duration_sec = 0.7, smooth_add_sec = 0.15) :
         os.makedirs('temp', exist_ok=True)
         self.filepath = filepath
         self.filename = self.filepath[:-4]
@@ -30,6 +30,8 @@ class CutterIt :
         else :
             self.array, self.rate = self.audio2array(self.filepath)
             self.typer = AudioFileClip(filepath)
+
+        self.duration = self.typer.duration
 
     def video2array(self) :
         # video to audio
@@ -85,6 +87,11 @@ class CutterIt :
         for start_rate, stop_rate in under_cuts.items() :
             start_sec = self.rate2sec(start_rate)
             stop_sec = self.rate2sec(stop_rate)
+
+            # smoothing: {12.29: 13.76, 24.9: 25.69} -> {12.39: 13.66, 25.00: 25.59} ;smooth_add_sec = 0.1
+            start_sec = round(start_sec + self.smooth_add_sec, 2)
+            stop_sec = round(stop_sec - self.smooth_add_sec, 2)
+
             under_cuts_sec[start_sec] = stop_sec
             reversed_cuts[stop_sec] = start_sec
 
@@ -99,34 +106,29 @@ class CutterIt :
             under_cuts_sec.pop(start_sec)
 
         return under_cuts_sec
-    
-    def get_undercuts_smooth(self, under_cuts_sec: dict) :
-        '''
-        add smoother for silent part with smooth_add_sec 
 
-        {12.29: 13.76, 24.9: 25.69} -> {12.39: 13.66, 25.00: 25.59} ; smooth_add_sec = 0.1
-        '''
-        under_cuts_sec_smooth = {}
-        for start_sec, stop_sec in under_cuts_sec.items() :
-            under_cuts_sec_smooth[round(start_sec + self.smooth_add_sec, 2)] = round(stop_sec - self.smooth_add_sec, 2)
-
-        return under_cuts_sec_smooth
-
-    def get_keeps_sec(self, under_cuts_sec: list) :
+    def get_keeps_sec(self, under_cuts_sec: dict) :
         '''
         get keeps sec from undercuts sec
 
         {12.29: 13.76, 24.9: 25.69, 26.48: 27.13} -> {0.00: 12.29, 13:76: 24.9, ... }
         '''
-        keep_sec = {}
+        keeps_sec = {}
         previous_sec = 0.00
         for start_sec, stop_sec in under_cuts_sec.items() :
-            keep_sec[previous_sec] = round(start_sec + self.smooth_add_sec, 2)
-            previous_sec = round(stop_sec - self.smooth_add_sec, 2)
+            keeps_sec[previous_sec] = start_sec
+            previous_sec = stop_sec
         
-        return keep_sec
+        # forgot last non-silent sec
+        # if duration = 68.8
+        # undercuts: { ..., 49.87: 50.3, 51.07: 52.51}, keeps_sec: { ... :49.87, 50.3: 51.07} -> { ... :49.87, 50.3: 51.07, 52.51: 68.8}
+        last_under_cuts_sec = list(under_cuts_sec.values())[-1]
+        if last_under_cuts_sec != self.duration : # becuase if it 68.8: 68.8 -> 0 sec we don't want to do it
+            keeps_sec[last_under_cuts_sec] = self.duration
+        
+        return keeps_sec
     
-    def cutter(self, save_path: str, keeps_sec: list, file_type = 'mp3') :
+    def cutter(self, save_path: str, keeps_sec: dict, file_type = 'mp3') :
         '''
         cut silent part then save to save_path
         '''
@@ -155,8 +157,6 @@ class CutterIt :
         else :
             final_video = concatenate_audioclips(clips_to_keep)
             final_video.write_audiofile(save_path, verbose=False, logger=None)
-        
-        # self.remove_temp()
 
     def remove_temp(self) :
         '''remove temp'''
@@ -164,12 +164,15 @@ class CutterIt :
         os.rmdir('temp')
 
 if __name__ == '__main__' :
-    cut = CutterIt(filepath='testvideo.mp4')
+    cut = CutterIt(filepath='video.mp4')
     array = cut.array
     undercuts = cut.get_under_cuts(array)
     keeps_sec = cut.get_keeps_sec(undercuts)
-    cut.cutter('keep_cutter.mp4', keeps_sec, file_type='mp4')
+    cut.cutter('keep_cutter.mp4', keeps_sec, file_type='mp4') # or .mp3
 
     # if want only silent part
-    undercuts_smooth = cut.get_undercuts_smooth(undercuts)
-    cut.cutter('silent_part.mp4', undercuts_smooth, file_type='mp4')
+    cut.cutter('silent_part.mp4', undercuts, file_type='mp4')
+
+    # delete temporary folder
+    cut.typer.close()
+    cut.remove_temp()
