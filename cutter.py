@@ -6,7 +6,7 @@ from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_videoclips,
 class CutterIt :
     '''
     - Input: .mp4 or mp3 file
-    - task: cutter silent part or keep only silent part 
+    - Task: cutter silent part or keep only silent part 
 
     Parameter
         - cut_duration_sec: second for removing or keeping, if silent longer than
@@ -24,20 +24,22 @@ class CutterIt :
         self.smooth_add_sec = smooth_add_sec
         assert self.cut_duration_sec >= self.smooth_add_sec*2 , 'cut_duration_sec must longer than 2* smooth_add_sec'
 
+        # input is mp4 or mp3 file
         if self.filetype == 'mp4':
             self.array, self.rate = self.video2array()
-            self.typer = VideoFileClip(filepath)
+            self.media = VideoFileClip(self.filepath)
         else :
             self.array, self.rate = self.audio2array(self.filepath)
-            self.typer = AudioFileClip(filepath)
+            self.media = AudioFileClip(self.filepath)
 
-        self.duration = self.typer.duration
+        self.duration = round(self.media.duration, 3)
 
     def video2array(self) :
         # video to audio
-        audio_path = f'temp/{self.filename}.mp3'
+        audio_path = f'temp/{self.filename}.wav'
         video = VideoFileClip(self.filepath)
         video.audio.write_audiofile(audio_path, verbose=False, logger=None)
+        video.close()
         # audio to array
         return self.audio2array(audio_path)
     
@@ -54,17 +56,16 @@ class CutterIt :
 
     def rate2sec(self, samplerate: int) :
         '''convert sample rate to second'''
-        return round(samplerate / self.rate , 2)
+        return round(samplerate / self.rate , 3)
     
     def get_under_cuts(self, array: np.array, alpha = 85) :
         '''
         get undercuts list from array.
-        
-        alpha: percentile for cut point if sound silent than threshold_alpha it'll cut off.
+        - alpha: percentile for cut point if sound silent than threshold_alpha it'll cut off.
         '''
         threshold = np.percentile(array[array > 0], q=alpha)
         cut_duration_rate = self.sec2rate(self.cut_duration_sec)
-        
+
         under_ts_rate = 0
         is_start_rate = True
         under_cuts = {}
@@ -82,49 +83,37 @@ class CutterIt :
                 under_ts_rate = 0
         
         # undercuts rate to sec
-        under_cuts_sec = {}
-        reversed_cuts = {} # for use when: {25: 26, 26: 27} -> {25: 27}
+        under_cuts_sec = []
         for start_rate, stop_rate in under_cuts.items() :
             start_sec = self.rate2sec(start_rate)
             stop_sec = self.rate2sec(stop_rate)
 
             # smoothing: {12.29: 13.76, 24.9: 25.69} -> {12.39: 13.66, 25.00: 25.59} ;smooth_add_sec = 0.1
-            start_sec = round(start_sec + self.smooth_add_sec, 2)
-            stop_sec = round(stop_sec - self.smooth_add_sec, 2)
+            start_sec = round(start_sec + self.smooth_add_sec, 3)
+            stop_sec = round(stop_sec - self.smooth_add_sec, 3)
 
-            under_cuts_sec[start_sec] = stop_sec
-            reversed_cuts[stop_sec] = start_sec
-
-        # {25: 26, 26: 27} -> {25: 27}
-        remove_start_sec = []
-        for start_sec, stop_sec in under_cuts_sec.items() :
-            if start_sec in under_cuts_sec.values() :
-                under_cuts_sec[reversed_cuts[start_sec]] = stop_sec
-                remove_start_sec.append(start_sec)
-        # remove key {25: 27, 26: 27} -> {25: 27}
-        for start_sec in remove_start_sec :
-            under_cuts_sec.pop(start_sec)
-
+            under_cuts_sec.append((start_sec, stop_sec))
+            
         return under_cuts_sec
 
-    def get_keeps_sec(self, under_cuts_sec: dict) :
+    def get_keeps_sec(self, under_cuts_sec: list) :
         '''
         get keeps sec from undercuts sec
 
         {12.29: 13.76, 24.9: 25.69, 26.48: 27.13} -> {0.00: 12.29, 13:76: 24.9, ... }
         '''
-        keeps_sec = {}
-        previous_sec = 0.00
-        for start_sec, stop_sec in under_cuts_sec.items() :
-            keeps_sec[previous_sec] = start_sec
+        keeps_sec = []
+        previous_sec = 0.000
+        for start_sec, stop_sec in under_cuts_sec :
+            keeps_sec.append((previous_sec, start_sec))
             previous_sec = stop_sec
         
         # forgot last non-silent sec
         # if duration = 68.8
         # undercuts: { ..., 49.87: 50.3, 51.07: 52.51}, keeps_sec: { ... :49.87, 50.3: 51.07} -> { ... :49.87, 50.3: 51.07, 52.51: 68.8}
-        last_under_cuts_sec = list(under_cuts_sec.values())[-1]
+        last_under_cuts_sec = under_cuts_sec[-1][-1]
         if last_under_cuts_sec != self.duration : # becuase if it 68.8: 68.8 -> 0 sec we don't want to do it
-            keeps_sec[last_under_cuts_sec] = self.duration
+            keeps_sec.append((last_under_cuts_sec, self.duration))
         
         return keeps_sec
     
@@ -132,28 +121,30 @@ class CutterIt :
         '''
         cut silent part then save to save_path
         '''
-        if self.filetype == 'mp3' and file_type == 'mp4' :
-            raise Exception('mp3 can be save only to mp3 file')
+        
+        if self.filetype in ['mp3', 'wav'] and file_type == 'mp4' :
+            raise Exception(f'{self.filetype} can be save only to audio file')
 
         if self.filetype == 'mp4' and file_type == 'mp3' :
-            file = AudioFileClip(f'temp/{self.filename}.mp3')
-        else :
-            file = self.typer 
+            self.media.close()
+            self.media = AudioFileClip(f'temp/{self.filename}.wav')
+        
 
         clips_to_keep = []
-        for start_sec, stop_sec in keeps_sec.items() :
-            clip = file.subclip(start_sec, stop_sec)
+        for start_sec, stop_sec in keeps_sec :
+            clip = self.media.subclip(start_sec, stop_sec)
             clips_to_keep.append(clip)
 
         # save_path
         if save_path[-3:] in ['mp3', 'mp4'] :
             save_path = save_path
+            assert save_path[-3:] == file_type, 'file_type must same as save_path'
         else :
             save_path = f'{save_path}.{file_type}'
 
         if file_type == 'mp4' :
             final_video = concatenate_videoclips(clips_to_keep)
-            final_video.write_videofile(save_path, fps=file.fps,  verbose=False, logger=None)
+            final_video.write_videofile(save_path, fps=self.media.fps,  verbose=False, logger=None)
         else :
             final_video = concatenate_audioclips(clips_to_keep)
             final_video.write_audiofile(save_path, verbose=False, logger=None)
@@ -164,7 +155,7 @@ class CutterIt :
         os.rmdir('temp')
 
 if __name__ == '__main__' :
-    cut = CutterIt(filepath='video.mp4')
+    cut = CutterIt(filepath='mrbeast.mp4')
     array = cut.array
     undercuts = cut.get_under_cuts(array)
     keeps_sec = cut.get_keeps_sec(undercuts)
@@ -172,7 +163,3 @@ if __name__ == '__main__' :
 
     # if want only silent part
     cut.cutter('silent_part.mp4', undercuts, file_type='mp4')
-
-    # delete temporary folder
-    cut.typer.close()
-    cut.remove_temp()
